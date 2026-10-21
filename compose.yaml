@@ -1,0 +1,128 @@
+name: facerec
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: facerec-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-facerec}
+      POSTGRES_USER: ${POSTGRES_USER:-facerec}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-lab-password}
+    volumes:
+      - facerec-db:/var/lib/postgresql/data
+    networks:
+      - facerec-internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+
+  api:
+    build:
+      context: ./backend
+      target: runtime
+    container_name: facerec-api
+    restart: unless-stopped
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8091"]
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8091:8091"
+    networks:
+      - facerec-internal
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8091/api/health', timeout=3)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+
+  worker:
+    build:
+      context: ./backend
+      target: runtime
+    container_name: facerec-worker
+    restart: unless-stopped
+    command: ["uvicorn", "app.worker:app", "--host", "0.0.0.0", "--port", "8092"]
+    env_file: .env
+    depends_on:
+      api:
+        condition: service_healthy
+    volumes:
+      - ./models:/app/models:ro
+    networks:
+      - facerec-internal
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8092/health', timeout=3)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    deploy:
+      resources:
+        limits:
+          cpus: "4.0"
+          memory: 4G
+
+  web:
+    build: ./frontend
+    container_name: facerec-web
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+      worker:
+        condition: service_healthy
+    ports:
+      - "3001:80"
+    networks:
+      - facerec-internal
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/healthz || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+
+networks:
+  facerec-internal:
+    name: facerec-internal
+    driver: bridge
+    ipam:
+      config:
+        # Fixed non-routed lab subnet. Never let Docker auto-select an
+        # RFC1918 range that can overlap the office VPN routes.
+        - subnet: 198.18.254.0/28
+          gateway: 198.18.254.1
+
+volumes:
+  facerec-db:
+    name: facerec-db
