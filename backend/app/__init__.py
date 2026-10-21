@@ -1,0 +1,2 @@
+"""FaceRec lab application."""
+
