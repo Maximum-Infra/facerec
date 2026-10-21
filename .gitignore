@@ -1,0 +1,10 @@
+.env
+__pycache__/
+*.py[cod]
+.pytest_cache/
+frontend/node_modules/
+frontend/dist/
+models/*.onnx
+!models/.gitkeep
+facerec-lab.tar.gz
+
